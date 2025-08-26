@@ -1,93 +1,39 @@
 import pytest
 import json
-from unittest.mock import patch, MagicMock, AsyncMock
-from fastapi.testclient import TestClient
-from app import app, notificacoes, QUEUE_NAME, RETRY_QUEUE, VALIDATION_QUEUE
+from unittest.mock import patch, MagicMock
+from fastapi import status
+from app import publish_message, NotificacaoPayload, notificacoes, QUEUE_NAME
 
-client = TestClient(app)
-
-sample_message = {
-    "traceId": "1234-5678",
-    "mensagemId": "abcd-efgh",
-    "conteudoMensagem": "Mensagem de teste",
-    "tipoNotificacao": "EMAIL",
-    "status": "RECEBIDO"
-}
-
-@pytest.fixture(autouse=True)
-def clear_notificacoes():
-    notificacoes.clear()
-    notificacoes[sample_message["traceId"]] = sample_message.copy()
-
-@patch("app.pika.BlockingConnection")
-@patch("app.random.randint")
-@patch("app.asyncio.sleep", new_callable=AsyncMock)
-def test_consume_message_one_success(mock_sleep, mock_randint, mock_pika):
-    from app import channel, VALIDATION_QUEUE, notificacoes
-
-    mock_conn = MagicMock()
-    mock_channel = MagicMock()
-    mock_pika.return_value = mock_conn
-    mock_conn.channel.return_value = mock_channel
-
-    # Forçar sucesso
-    mock_randint.return_value = 50
-
-    # Mock do basic_get retornando a mensagem
-    sample_message = {
-        "traceId": "1234-5678",
-        "mensagemId": "abcd-efgh",
-        "conteudoMensagem": "Mensagem de teste",
-        "tipoNotificacao": "EMAIL",
-        "status": "RECEBIDO"
-    }
-    mock_channel.basic_get.return_value = (MagicMock(), MagicMock(), json.dumps(sample_message).encode())
-    mock_channel.basic_publish = MagicMock()
-
-    # Substitui o channel global pelo mock
-    channel = mock_channel
-
-    from fastapi.testclient import TestClient
-    from app import app
-    client = TestClient(app)
-
-    response = client.get("/api/consumer_one/")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["traceId"] == sample_message["traceId"]
-    assert data["mensagemId"] == sample_message["mensagemId"]
-
-    mock_channel.basic_publish.assert_called_with(
-        exchange="",
-        routing_key=VALIDATION_QUEUE,
-        body=json.dumps(sample_message),
-        properties=mock_channel.basic_publish.call_args[1]['properties']
+@pytest.mark.asyncio
+async def test_publish_message():
+    payload = NotificacaoPayload(
+        conteudoMensagem="Teste de notificação",
+        tipoNotificacao="EMAIL"
     )
 
+    with patch("app.channel") as mock_channel:
+        mock_channel.basic_publish = MagicMock()
 
-@patch("app.pika.BlockingConnection")
-@patch("app.random.randint")
-@patch("app.asyncio.sleep", new_callable=AsyncMock)  # CORRIGIDO
-def test_consume_message_one_failure(mock_sleep, mock_randint, mock_pika):
-    mock_conn = MagicMock()
-    mock_channel = MagicMock()
-    mock_pika.return_value = mock_conn
-    mock_conn.channel.return_value = mock_channel
+        response = await publish_message(payload)
 
-    mock_randint.return_value = 10  # Forçar falha
+        content_bytes = response.body
+        content_dict = json.loads(content_bytes)
 
-    mock_channel.basic_get.return_value = (MagicMock(), MagicMock(), json.dumps(sample_message).encode())
-    mock_channel.basic_publish = MagicMock()
+        assert "traceId" in content_dict
+        assert "mensagemId" in content_dict
+        assert content_dict["status"] == "Recebido para processamento assíncrono"
 
-    response = client.get("/api/consumer_one/")
-    assert response.status_code == 400
-    data = response.json()
-    assert data["traceId"] == sample_message["traceId"]
-    assert data["status"] == "FALHA_PROCESSAMENTO_INICIAL"
+        trace_id = content_dict["traceId"]
+        assert trace_id in notificacoes
+        assert notificacoes[trace_id]["conteudoMensagem"] == payload.conteudoMensagem
+        assert notificacoes[trace_id]["tipoNotificacao"] == payload.tipoNotificacao
 
-    mock_channel.basic_publish.assert_called_with(
-        exchange="",
-        routing_key=RETRY_QUEUE,
-        body=json.dumps(sample_message),
-        properties=mock_channel.basic_publish.call_args[1]['properties']
-    )
+        mock_channel.basic_publish.assert_called_once()
+        args, kwargs = mock_channel.basic_publish.call_args
+        assert kwargs["routing_key"] == QUEUE_NAME
+        body_dict = json.loads(kwargs["body"])
+        assert body_dict["traceId"] == trace_id
+        assert body_dict["mensagemId"] == content_dict["mensagemId"]
+        assert body_dict["conteudoMensagem"] == payload.conteudoMensagem
+        assert body_dict["tipoNotificacao"] == payload.tipoNotificacao
+        assert body_dict["status"] == "RECEBIDO"
