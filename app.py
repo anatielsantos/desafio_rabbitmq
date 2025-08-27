@@ -96,7 +96,7 @@ async def consume_message_one():
     failure_chance = random.randint(1, 100)
     if failure_chance <= 15:
         if trace_id in notifications:
-            notifications[trace_id]["status"] = "INITIAL_PROCESSING_FAILURE"
+            notifications[trace_id]["status"] = "FALHA_PROCESSAMENTO_INICIAL"
 
         channel.basic_publish(
             exchange="",
@@ -109,13 +109,13 @@ async def consume_message_one():
             status_code=400,
             content={
                 "traceId": trace_id,
-                "status": "INITIAL_PROCESSING_FAILURE"
+                "status": "FALHA_PROCESSAMENTO_INICIAL"
             }
         )
     else:
         await asyncio.sleep(random.uniform(1, 1.5))
         if trace_id in notifications:
-            notifications[trace_id]["status"] = "INTERMEDIATE_PROCESSED"
+            notifications[trace_id]["status"] = "PROCESSADO_INTERMEDIARIO"
             channel.basic_publish(
                 exchange="",
                 routing_key=VALIDATION_QUEUE,
@@ -145,7 +145,7 @@ async def consume_message_two():
     failure_chance = random.randint(1, 100)
     if failure_chance <= 20:
         if trace_id in notifications:
-            notifications[trace_id]["status"] = "FINAL_REPROCESSING_FAILURE"
+            notifications[trace_id]["status"] = "FALHA_FINAL_REPROCESSAMENTO"
 
         channel.basic_publish(
             exchange="",
@@ -158,12 +158,12 @@ async def consume_message_two():
             status_code=400,
             content={
                 "traceId": trace_id,
-                "status": "FINAL_REPROCESSING_FAILURE"
+                "status": "FALHA_FINAL_REPROCESSAMENTO"
             }
         )
     else:
         if trace_id in notifications:
-            notifications[trace_id]["status"] = "REPROCESSED_SUCCESSFULLY"
+            notifications[trace_id]["status"] = "REPROCESSADO_COM_SUCESSO"
             channel.basic_publish(
                 exchange="",
                 routing_key=VALIDATION_QUEUE,
@@ -195,7 +195,7 @@ async def consume_message_three():
     if failure_chance <= 5:
         await asyncio.sleep(random.uniform(1, 1.5))
         if trace_id in notifications:
-            notifications[trace_id]["status"] = "FINAL_SEND_FAILURE"
+            notifications[trace_id]["status"] = "FALHA_ENVIO_FINAL"
             channel.basic_publish(
                 exchange="",
                 routing_key=DEAD_QUEUE,
@@ -206,21 +206,21 @@ async def consume_message_three():
             status_code=400,
             content={
                 "traceId": trace_id,
-                "status": "INITIAL_PROCESSING_FAILURE"
+                "status": "FALHA_ENVIO_FINAL"
             }
         )
     else:
         if trace_id in notifications:
-            notifications[trace_id]["status"] = "SENT_SUCCESS"
+            notifications[trace_id]["status"] = "ENVIADO_SUCESSO"
 
-        if notification_type == "EMAIL":
-            send_simulation = {"message": f"[EMAIL] Sending email: {message['messageContent']}"}
-        elif notification_type == "SMS":
-            send_simulation = {"message": f"[SMS] Sending SMS: {message['messageContent']}"}
-        elif notification_type == "PUSH":
-            send_simulation = {"message": f"[PUSH] Sending push notification: {message['messageContent']}"}
+        if tipo == "EMAIL":
+            real_send_simulation = {"message": f"[EMAIL] Enviando email: {message['conteudoMensagem']}"}
+        elif tipo == "SMS":
+            real_send_simulation = {"message": f"[SMS] Enviando SMS: {message['conteudoMensagem']}"}
+        elif tipo == "PUSH":
+            real_send_simulation = {"message": f"[PUSH] Enviando notificação push: {message['conteudoMensagem']}"}
         else:
-            send_simulation = {"message": f"[UNKNOWN] Invalid type: {notification_type}"}
+            real_send_simulation = {"message": f"[DESCONHECIDO] Tipo inválido: {tipo}"}
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
@@ -240,6 +240,6 @@ async def consume_message_four():
         status_code=200,
         content={
             "content": message,
-            "message": "This message will no longer be processed"
+            "message": "Esta mensagem não será mais processada"
         }
     )
